@@ -526,6 +526,17 @@ curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/sayhello
 **원인:**
 - `kubectl port-forward`가 실행 중이지 않거나, Pod 재생성 등으로 끊어진 경우 발생한다.
 
+**`kubectl port-forward`가 끊어지는 주요 원인:**
+
+| 원인 | 설명 |
+|------|------|
+| Pod 재생성 | 환경변수·이미지 태그 변경 등으로 Pod가 삭제/재생성되면 기존 연결이 끊김 |
+| 유휴 타임아웃 | 일정 시간 트래픽이 없으면 자동으로 연결이 끊어짐 |
+| 네트워크 변경 | WSL2 등에서 네트워크 인터페이스가 변경되면 끊김 |
+| 터미널 종료 | 포트포워드 프로세스를 실행한 터미널이 닫히면 함께 종료 |
+
+`kubectl port-forward`는 일시적인 디버깅/테스트용 도구이다. 프로덕션에서는 NodePort, LoadBalancer, 또는 실제 Ingress + 외부 IP를 사용한다.
+
 **해결:**
 ```bash
 # 포트포워드 재실행
@@ -578,5 +589,19 @@ kubectl annotate application dummy-server -n argocd argocd.argoproj.io/refresh=h
 kubectl get pods -n dummy-server -w
 ```
 Pod가 새로 뜬 후 다시 curl로 확인한다.
+
+### 16.5 변경 유형별 GitHub Actions 실행 필요 여부
+
+변경 후 GitHub Actions(`Run workflow`)를 실행해야 하는지 헷갈릴 수 있다:
+
+| 변경 내용 | GitHub Actions 실행 | 이유 |
+|-----------|:-------------------:|------|
+| `values.yaml`의 `GREETING_MESSAGE` 등 환경변수 변경 | **불필요** | Docker 이미지는 그대로이고, `values.yaml` 변경만으로 ArgoCD가 자동 동기화 |
+| `values.yaml`의 `replicaCount`, `ingress` 등 K8s 설정 변경 | **불필요** | 이미지 변경 없이 Helm 값만 바뀌므로 ArgoCD가 자동 동기화 |
+| `dummy_server.py` 코드 변경 | **필요** | 코드가 바뀌었으므로 새 Docker 이미지 빌드/푸시 필요 |
+| `Dockerfile` 변경 | **필요** | 이미지 재빌드 필요 |
+| Helm 템플릿(`templates/*.yaml`) 변경 | **불필요** | 이미지 변경 없이 ArgoCD가 자동 동기화 |
+
+**요약:** Docker 이미지에 포함되는 파일(`dummy_server.py`, `Dockerfile`)이 변경되면 GitHub Actions 실행이 필요하고, 그 외 Helm 설정만 변경하면 `git push`만으로 자동 반영된다.
 
 
