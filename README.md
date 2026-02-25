@@ -189,3 +189,95 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 - `kubectl apply`와 `server-side apply` 혼용 시 CRD 애노테이션 크기 이슈가 발생할 수 있다.
 - `applicationsets.argoproj.io`의 `metadata.annotations` 오류가 반복될 때는 `--server-side --force-conflicts` 사용을 우선 적용했다.
 - 네임스페이스를 누락하면 ArgoCD 리소스가 `default`에 생성될 수 있어, 설치 전/후 네임스페이스 일관성을 유지해야 한다.
+
+## 9. dummy-server 배포(Application 적용)
+- GitOps 배포용 매니페스트는 `k8s/deployment.yaml`, `k8s/service.yaml`, `k8s/namespace.yaml`(선택), `argocd/dummy-server-application.yaml` 순으로 준비한다.
+- `k8s/deployment.yaml`의 image 값은 `ghcr.io/workingdad365/gitops_test:<태그>` 형식을 사용한다.
+- Application을 생성하고 동기화한다.
+```bash
+kubectl apply -f argocd/dummy-server-application.yaml
+kubectl get application dummy-server -n argocd
+kubectl annotate application dummy-server -n argocd argocd.argoproj.io/refresh=hard --overwrite
+```
+- 동작 상태를 확인한다.
+```bash
+kubectl get pods -n dummy-server
+kubectl get svc -n dummy-server
+kubectl port-forward svc/dummy-server -n dummy-server 8081:80
+curl http://localhost:8081/ip
+```
+- `curl` 테스트가 실패하면 `application`이 `OutOfSync`/`Missing`인지 확인하고, 문제가 없으면 하드 리프레시를 반복한다.
+- ArgoCD UI를 `8080`에서 사용 중이라면 dummy 서비스는 다른 포트(예: `18080`)를 사용한다.
+
+## 10. Ingress 설치/적용 (kind 기준)
+- ingress-nginx를 설치한다.
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/kind/deploy.yaml
+kubectl get ns ingress-nginx
+kubectl get pods -n ingress-nginx
+```
+- 단일 노드에서 컨트롤러가 Pending이면 노드 라벨을 추가한다.
+```bash
+kubectl label node gitops-practice-control-plane ingress-ready=true --overwrite
+kubectl get pods -n ingress-nginx -w
+```
+- dummy-server Ingress 예시는 `k8s/dummy-server-ingress.yaml`로 저장한다.
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dummy-server
+  namespace: dummy-server
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dummy.127.0.0.1.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dummy-server
+                port:
+                  number: 80
+```
+- Ingress를 배포하고 테스트한다.
+```bash
+kubectl apply -f k8s/dummy-server-ingress.yaml
+kubectl get ingress -n dummy-server
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 18081:80
+curl -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:18081/ip
+```
+- 응답이 `{"ip":"..."}`이면 Ingress 연결이 완료된 것이다.
+
+## 11. ArgoCD UI를 Ingress로 노출
+- `k8s/argocd-server-ingress.yaml` 생성 후 적용한다.
+```bash
+kubectl apply -f k8s/argocd-server-ingress.yaml
+kubectl get ingress -n argocd
+```
+- 테스트 포트포워드는 기존 `8080` 충돌을 피해서 별도 포트를 사용한다.
+```bash
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 18080:80
+curl -L -H "Host: argocd.127.0.0.1.nip.io" http://127.0.0.1:18080
+```
+- 브라우저로 확인할 때는 `http://argocd.127.0.0.1.nip.io:18080`로 접속한다.
+- 로그인은 기존 `admin` 계정과 `argocd-initial-admin-secret` 비밀번호를 사용한다.
+
+## 12. 마무리 체크리스트
+- 실행 포트 정리
+  - ArgoCD는 `kubectl port-forward -n argocd svc/argocd-server 8080:443`로 운영
+  - Ingress 테스트는 `28080:80` 또는 사용 가능한 임시 포트로 운영
+- 최종 동작 점검
+  - `kubectl get application dummy-server -n argocd`
+  - `curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/ip`
+  - `curl -s -H "Host: argocd.127.0.0.1.nip.io" http://127.0.0.1:28080`
+- 매니페스트 동기화 재실행
+  - `kubectl annotate application dummy-server -n argocd argocd.argoproj.io/refresh=hard --overwrite`
+- 정리
+  - 완료 후 필요 없어진 `kubectl port-forward`는 종료한다.
+  - 새 이미지 배포는 GHCR 푸시 후 `deployment.yaml`의 태그 갱신 → `git push` → 위 주석된 hard refresh 순으로 반복한다.
+  - 향후 이미지 태그만 바꿔도 바로 배포되도록 하려면 추후 Helm/이미지 업데이트 자동화 단계를 추가할 수 있다.
