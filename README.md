@@ -604,4 +604,73 @@ Pod가 새로 뜬 후 다시 curl로 확인한다.
 
 **요약:** Docker 이미지에 포함되는 파일(`dummy_server.py`, `Dockerfile`)이 변경되면 GitHub Actions 실행이 필요하고, 그 외 Helm 설정만 변경하면 `git push`만으로 자동 반영된다.
 
+## 17. 참고: nip.io 호스트 이름과 실전 네트워크 구조
+
+### 17.1 nip.io란?
+
+`values.yaml`의 `host: dummy.127.0.0.1.nip.io`는 **nip.io**라는 무료 와일드카드 DNS 서비스를 활용한 것이다:
+
+```
+<원하는이름>.<IP주소>.nip.io → 해당 IP로 자동 resolve
+```
+
+| 예시 | resolve 결과 |
+|------|-------------|
+| `dummy.127.0.0.1.nip.io` | `127.0.0.1` |
+| `argocd.127.0.0.1.nip.io` | `127.0.0.1` |
+| `myapp.192.168.1.10.nip.io` | `192.168.1.10` |
+
+별도 DNS 설정 없이 호스트 기반 라우팅을 테스트할 수 있어서 로컬 Ingress 실습에 유용하다. 프로덕션에서는 실제 도메인(`api.example.com` 등)을 사용하고 DNS에 A/CNAME 레코드를 등록한다.
+
+유사 서비스로 `sslip.io`가 있다 (`xip.io`는 중단됨).
+
+### 17.2 실전(AKS 등) 네트워크 구조
+
+실전 환경에서는 개별 Pod IP를 직접 사용하지 않는다. Service와 Ingress가 추상화해준다:
+
+```
+[외부 사용자]
+    ↓
+[Ingress Controller (NGINX / Azure Application Gateway)]  ← 공인 IP 또는 내부 LB IP
+    ↓  (호스트/경로 기반 라우팅)
+[Service]  ← ClusterIP (클러스터 내부 가상 IP)
+    ↓  (라운드로빈 등 로드밸런싱)
+[Pod 1] [Pod 2] [Pod 3]  ← 각각 고유 Pod IP (ephemeral)
+```
+
+### 17.3 IP 확인 방법
+
+| 대상 | 명령어 | 용도 |
+|------|--------|------|
+| Ingress 외부 IP | `kubectl get ingress -n <ns>` | 외부에서 접속할 공인/LB IP |
+| Service ClusterIP | `kubectl get svc -n <ns>` | 클러스터 내부 통신용 |
+| Service 외부 IP (LoadBalancer) | `kubectl get svc -n <ns>` → `EXTERNAL-IP` | Service를 직접 외부 노출할 때 |
+| Pod IP | `kubectl get pods -n <ns> -o wide` | 디버깅용 (Pod 재생성 시 변경됨) |
+
+### 17.4 실전 접근 방식
+
+**Ingress + 도메인 (가장 일반적):**
+```bash
+# Ingress Controller의 외부 IP 확인
+kubectl get svc -n ingress-nginx
+# EXTERNAL-IP: 20.xxx.xxx.xxx (Azure가 할당한 공인 IP)
+# → DNS에 api.mycompany.com → 20.xxx.xxx.xxx (A 레코드) 등록
+```
+
+**서비스 간 내부 통신:**
+```bash
+# 같은 클러스터 안에서는 Service 이름으로 접근 (DNS 자동 등록)
+curl http://dummy-server.dummy-server.svc.cluster.local/sayhello
+#      [서비스명].[네임스페이스].svc.cluster.local
+```
+
+**디버깅 시 Pod IP 확인:**
+```bash
+kubectl get pods -n dummy-server -o wide
+# NAME                            READY   IP            NODE
+# dummy-server-xxxx-yyyy          1/1     10.244.0.40   aks-nodepool1-xxxx
+```
+
+**핵심:** Pod IP는 일시적(Pod 재생성 시 변경)이므로 직접 사용하지 않고, 항상 Service 이름 또는 Ingress 도메인으로 접근한다.
+
 
