@@ -52,21 +52,19 @@ jobs:
             ${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.IMAGE_TAG }}
             ${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.IMAGE_DATE_TAG }}
 
-      - name: Sync deployment manifest image tag
+      - name: Sync Helm values image tag
         run: |
-          IMAGE_NAME="${{ steps.meta.outputs.IMAGE_NAME }}"
           IMAGE_TAG="${{ steps.meta.outputs.IMAGE_TAG }}"
-          IMAGE_FULL="${IMAGE_NAME}:${IMAGE_TAG}"
 
-          sed -i "s|${IMAGE_NAME}:[^[:space:]]*|${IMAGE_FULL}|g" k8s/deployment.yaml
+          sed -i "s/^  tag: .*/  tag: ${IMAGE_TAG}/" helm/dummy-server/values.yaml
 
-          if git diff --quiet -- k8s/deployment.yaml; then
-            echo "No manifest change."
+          if git diff --quiet -- helm/dummy-server/values.yaml; then
+            echo "No values change."
             exit 0
           fi
 
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add k8s/deployment.yaml
+          git add helm/dummy-server/values.yaml
           git commit -m "chore: update dummy-server image tag to ${IMAGE_TAG}"
           git push origin HEAD:${GITHUB_REF_NAME}

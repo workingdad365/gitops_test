@@ -1,0 +1,13 @@
+dummy-server가 배포되었습니다.
+
+1. 서비스 확인:
+   kubectl get svc {{ include "dummy-server.fullname" . }} -n {{ .Release.Namespace }}
+
+2. Pod 확인:
+   kubectl get pods -n {{ .Release.Namespace }} -l app={{ include "dummy-server.name" . }}
+
+3. API 테스트:
+   curl -s -H "Host: {{ .Values.ingress.host }}" http://127.0.0.1:28080/ip
+   curl -s -H "Host: {{ .Values.ingress.host }}" http://127.0.0.1:28080/sayhello
+
+현재 GREETING_MESSAGE: {{ .Values.env.GREETING_MESSAGE | default "Hello!" }}

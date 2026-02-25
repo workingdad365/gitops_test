@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/workingdad365/gitops_test
+  tag: sha-20ea14c
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  host: dummy.127.0.0.1.nip.io
+
+env:
+  GREETING_MESSAGE: "안녕하세요 무엇을 도와드릴까요?"

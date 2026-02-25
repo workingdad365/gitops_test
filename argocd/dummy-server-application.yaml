@@ -6,10 +6,13 @@ metadata:
 spec:
   project: default
   source:
-    # TODO: 본 저장소를 다른 저장소/포크로 바꿀 경우 repoURL만 수정한다.
     repoURL: https://github.com/workingdad365/gitops_test.git
     targetRevision: main
-    path: k8s
+    path: helm/dummy-server
+    helm:
+      releaseName: dummy-server
+      valueFiles:
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: dummy-server

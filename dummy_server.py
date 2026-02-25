@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Request
 
 app = FastAPI()
@@ -20,3 +22,9 @@ def get_ip(request: Request):
 @app.get("/")
 def root(request: Request):
     return {"message": "ok", "ip": _extract_client_ip(request)}
+
+
+@app.get("/sayhello")
+def say_hello():
+    message = os.environ.get("GREETING_MESSAGE", "Hello!")
+    return {"message": message}
