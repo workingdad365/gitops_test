@@ -17,8 +17,8 @@ spec:
       containers:
         - name: dummy-server
           # TODO: GHCR에 push될 때마다 아래 IMAGE_TAG를 실제 태그로 갱신한다.
-          # 예: ghcr.io/workingdad365/gitops_test:sha-abcd1234
-          image: ghcr.io/workingdad365/gitops_test:PLACEHOLDER_IMAGE_TAG
+          # 예: ghcr.io/workingdad365/gitops_test:sha-20ea14c
+          image: ghcr.io/workingdad365/gitops_test:sha-20ea14c
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
