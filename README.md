@@ -811,4 +811,122 @@ resources:
     memory: "8Gi"
 ```
 
+## 20. 오토스케일링 (HPA)
+
+실전 환경(AKS 등)에서는 트래픽에 따라 Pod 수를 자동으로 조절하는 **HPA(HorizontalPodAutoscaler)**를 사용한다.
+
+### 20.1 개념
+
+Azure Container Apps에서 레플리카 최소/최대 개수와 스케일링 규칙을 설정하듯, Kubernetes에서는 HPA 리소스가 동일한 역할을 한다:
+
+| Azure Container Apps | Kubernetes (AKS) |
+|---------------------|-------------------|
+| 레플리카 최소/최대 수 | `minReplicas` / `maxReplicas` |
+| HTTP 동시 요청 수 기반 스케일링 | CPU/메모리 사용률 기반 스케일링 (기본) |
+| KEDA 스케일러 | KEDA 연동 가능 (이벤트 기반) |
+
+### 20.2 HPA 동작 원리
+
+```
+[metrics-server]  ← 각 Pod의 CPU/메모리 사용량 수집
+       ↓
+[HPA Controller]  ← 목표 사용률과 비교
+       ↓
+[Deployment]      ← replicas 수를 자동 조절
+       ↓
+[Pod 1] [Pod 2] [Pod 3] ...  ← 트래픽에 따라 늘고 줄음
+```
+
+- **스케일 아웃**: 평균 CPU 사용률이 목표(예: 70%)를 초과하면 Pod를 추가한다.
+- **스케일 인**: 사용률이 낮아지면 Pod를 줄인다 (`minReplicas`까지).
+- `metrics-server`가 클러스터에 설치되어 있어야 한다 (AKS는 기본 제공, kind는 별도 설치 필요).
+
+### 20.3 Helm 차트에서의 HPA 설정
+
+`values.yaml`에 오토스케일링 섹션을 추가한다:
+
+```yaml
+autoscaling:
+  enabled: false          # true로 변경하면 HPA 활성화
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # targetMemoryUtilizationPercentage: 80  # 메모리 기준도 가능
+```
+
+Helm 템플릿(`templates/hpa.yaml`)은 다음과 같이 작성한다:
+
+```yaml
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "dummy-server.fullname" . }}
+  labels:
+    {{- include "dummy-server.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "dummy-server.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+```
+
+### 20.4 HPA 사용 시 주의사항
+
+| 항목 | 설명 |
+|------|------|
+| `replicaCount` 충돌 | HPA 활성화 시 `deployment.yaml`에서 `replicas` 필드를 제거해야 한다. HPA가 replicas를 관리하므로 충돌 방지 |
+| `resources.requests` 필수 | CPU 기반 스케일링은 `requests.cpu`가 설정되어 있어야 사용률을 계산할 수 있다 |
+| metrics-server | AKS는 기본 설치됨. kind/minikube는 별도 설치 필요 |
+| 쿨다운 시간 | 스케일 아웃은 빠르지만 스케일 인은 기본 5분 안정화 후 진행 |
+
+### 20.5 HPA 상태 확인 명령어
+
+```bash
+# HPA 목록 및 현재 상태
+kubectl get hpa -n dummy-server
+
+# 상세 정보 (현재/목표 사용률, 현재 replicas)
+kubectl describe hpa -n dummy-server
+
+# 실시간 모니터링
+kubectl get hpa -n dummy-server -w
+```
+
+### 20.6 KEDA를 이용한 이벤트 기반 스케일링
+
+기본 HPA는 CPU/메모리 기반이지만, **KEDA(Kubernetes Event-Driven Autoscaling)**를 설치하면 Azure Container Apps처럼 다양한 이벤트 소스 기반으로 스케일링할 수 있다:
+
+- HTTP 요청 수
+- 메시지 큐 길이 (Azure Service Bus, RabbitMQ 등)
+- Kafka 토픽 lag
+- Cron 스케줄 등
+
+AKS에서는 KEDA 애드온을 활성화하여 사용할 수 있다:
+```bash
+az aks update --resource-group <rg> --name <cluster> --enable-keda
+```
+
+> 현재 프로젝트에서는 HPA를 실제로 구현하지 않았다. 실전 환경에서 필요할 때 위 템플릿을 추가하면 된다.
+
 
