@@ -1,5 +1,17 @@
 # GitOps Practice
 
+## 즉시 실행 가이드(요약)
+1) `dummy_server.py`, `Dockerfile`, `argocd`, `k8s` 관련 파일을 준비한다.
+2) `.github/workflows/build-and-push-ghcr.yml` 생성 후 GitHub에 커밋한다.
+3) `kind create cluster --name gitops-practice` 실행.
+4) `kubectl create namespace argocd` 후 ArgoCD를 설치한다.
+5) `kubectl apply -f argocd/dummy-server-application.yaml` 실행.
+6) Ingress를 사용하려면 `kubectl apply -f k8s/dummy-server-ingress.yaml` 실행.
+7) `kubectl apply -f k8s/argocd-server-ingress.yaml` 실행.
+8) GitHub Actions 수동 실행: `Build and Push dummy_server to GHCR` → `Run workflow`.
+9) 변경 반영 확인: `kubectl get application dummy-server -n argocd`.
+10) 서비스 확인: `curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/ip`.
+
 ## 1. 목표
 - FastAPI 기반 API 서버(`dummy_server.py`)를 구현한다.
 - Docker 이미지로 빌드한다.
@@ -77,7 +89,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -87,6 +99,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Prepare image metadata
         id: meta
@@ -95,9 +110,12 @@ jobs:
           REPO="${{ github.event.repository.name }}"
           OWNER_LOWER="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
           REPO_LOWER="$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
-          IMAGE_TAG="$(date +'%Y%m%d-%H%M%S')"
+          IMAGE_SHA="${GITHUB_SHA:0:7}"
+          IMAGE_TAG="sha-${IMAGE_SHA}"
+          IMAGE_DATE_TAG="$(date +'%Y%m%d-%H%M%S')"
           echo "IMAGE_NAME=ghcr.io/${OWNER_LOWER}/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_DATE_TAG=${IMAGE_DATE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -117,14 +135,40 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.IMAGE_TAG }}
-            ${{ steps.meta.outputs.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.IMAGE_DATE_TAG }}
+
+      - name: Sync deployment manifest image tag
+        run: |
+          IMAGE_NAME="${{ steps.meta.outputs.IMAGE_NAME }}"
+          IMAGE_TAG="${{ steps.meta.outputs.IMAGE_TAG }}"
+          IMAGE_FULL="${IMAGE_NAME}:${IMAGE_TAG}"
+
+          sed -i "s|${IMAGE_NAME}:[^[:space:]]*|${IMAGE_FULL}|g" k8s/deployment.yaml
+
+          if git diff --quiet -- k8s/deployment.yaml; then
+            echo "No manifest change."
+            exit 0
+          fi
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/deployment.yaml
+          git commit -m "chore: update dummy-server image tag to ${IMAGE_TAG}"
+          git push origin HEAD:${GITHUB_REF_NAME}
 ```
 
 ### 5.1 실행 방식
-- GitHub → Actions → `Build and Push dummy_server to GHCR` → `Run workflow`
-- 태그는 자동으로 `YYYYMMDD-hhmmss` 형식 생성됨
+- 기본 배포 태그는 `sha-<커밋해시 앞 7자리>` 형식이다.
+- 워크플로우는 이미지 빌드/푸시 후 `k8s/deployment.yaml`의 `image` 태그를 갱신해 Git에 자동 커밋/푸시한다.
 
-### 5.2 업로드 이미지 확인
+### 5.2 실행/확인 한 페이지 체크
+1. GitHub에서 `Build and Push dummy_server to GHCR` → `Run workflow` 실행
+2. 최근 커밋 확인: `git log -1 --oneline`
+3. ArgoCD 상태 확인: `kubectl get application dummy-server -n argocd`
+4. 배포 Pod 확인: `kubectl get pods -n dummy-server`
+5. API 동작 확인: `curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/ip`
+
+### 5.3 업로드 이미지 확인
 - GitHub 저장소 페이지에서 `Packages` 확인
 - 로컬 확인 예시
 ```bash
@@ -135,6 +179,27 @@ docker images | grep <REPO>
 - 태그 목록 조회 예시
 ```bash
 gh api /repos/<OWNER>/<REPO>/packages/container/<REPO>/versions --paginate
+```
+
+### 5.4 실습 복붙 실행 블록(현재 가이드 기준)
+```bash
+kind create cluster --name gitops-practice
+kubectl create namespace argocd
+kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/kind/deploy.yaml
+
+kubectl apply -f argocd/dummy-server-application.yaml
+kubectl apply -f k8s/dummy-server-ingress.yaml
+kubectl apply -f k8s/argocd-server-ingress.yaml
+kubectl get application dummy-server -n argocd
+
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 28080:80
+curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/ip
+curl -s -L -H "Host: argocd.127.0.0.1.nip.io" http://127.0.0.1:28080
+
+# GHCR 푸시 후 자동 갱신용
+kubectl get application dummy-server -n argocd
+kubectl get pods -n dummy-server
 ```
 
 ## 6. 로컬 Kubernetes 환경(kind) 구축
