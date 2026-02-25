@@ -673,4 +673,79 @@ kubectl get pods -n dummy-server -o wide
 
 **핵심:** Pod IP는 일시적(Pod 재생성 시 변경)이므로 직접 사용하지 않고, 항상 Service 이름 또는 Ingress 도메인으로 접근한다.
 
+## 18. 디렉터리 구조 설계 가이드
+
+### 18.1 현재 프로젝트의 디렉터리 분리 이유
+
+| 디렉터리 | 성격 | ArgoCD 자동 동기화 대상? |
+|----------|------|:------------------------:|
+| `helm/dummy-server/` | 애플리케이션 배포 리소스 (Helm 차트) | O |
+| `argocd/` | ArgoCD 자체 설정 (Application 정의) | X (수동 `kubectl apply`) |
+| `k8s/` | 인프라 리소스 (ArgoCD UI Ingress 등) | X (수동 `kubectl apply`) |
+
+ArgoCD의 `source.path`가 `helm/dummy-server`를 바라보기 때문에 **그 안에 있는 것만 자동 동기화 대상**이다. `argocd/`와 `k8s/`를 분리하지 않고 같은 경로에 넣으면 ArgoCD가 의도하지 않은 리소스까지 배포하게 된다.
+
+디렉터리 구조는 **컨벤션(관례)**이지 강제 규칙은 아니다. 다른 구조도 가능하다:
+
+```
+# 방법 1: 플랫하게 (소규모 프로젝트)
+gitops_test/
+├── helm/dummy-server/     # Helm 차트
+└── infra/                 # argocd + k8s 를 합쳐서
+    ├── dummy-server-application.yaml
+    └── argocd-server-ingress.yaml
+
+# 방법 2: 저장소 자체를 분리 (실전에서 많이 사용)
+app-repo/                  # 소스코드 + Dockerfile
+gitops-repo/               # Helm 차트 + ArgoCD Application (배포 전용)
+```
+
+핵심은 **ArgoCD가 바라보는 경로에 배포 대상만 있으면 된다.**
+
+### 18.2 Helm 차트 스캐폴딩: `helm create`
+
+Helm 차트 파일을 처음부터 수동으로 작성할 필요는 없다. `helm create` 명령으로 자동 생성할 수 있다:
+
+```bash
+helm create dummy-server
+```
+
+자동 생성되는 구조:
+```
+dummy-server/
+├── Chart.yaml
+├── values.yaml
+├── .helmignore
+├── charts/                  # 의존성 차트
+└── templates/
+    ├── _helpers.tpl
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── ingress.yaml
+    ├── hpa.yaml             # HorizontalPodAutoscaler
+    ├── serviceaccount.yaml
+    ├── NOTES.txt
+    └── tests/
+        └── test-connection.yaml
+```
+
+현재 프로젝트에서는 이 중 필요한 것만 남기고 단순화했다:
+
+| 자동 생성 파일 | 현재 프로젝트에서 사용 | 비고 |
+|---------------|:---------------------:|------|
+| `Chart.yaml` | O | |
+| `values.yaml` | O | 프로젝트에 맞게 수정 |
+| `_helpers.tpl` | O | 단순화 |
+| `deployment.yaml` | O | env 주입 추가 |
+| `service.yaml` | O | |
+| `ingress.yaml` | O | |
+| `NOTES.txt` | O | |
+| `hpa.yaml` | X | 오토스케일링 불필요 |
+| `serviceaccount.yaml` | X | 기본 ServiceAccount 사용 |
+| `tests/` | X | 테스트 생략 |
+| `.helmignore` | X | |
+| `charts/` | X | 의존성 없음 |
+
+실전에서도 보통 `helm create`로 스캐폴딩한 뒤 불필요한 파일을 지우고, `values.yaml`과 템플릿을 프로젝트에 맞게 수정하는 방식으로 진행한다.
+
 
