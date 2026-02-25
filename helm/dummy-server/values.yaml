@@ -18,4 +18,4 @@ ingress:
   host: dummy.127.0.0.1.nip.io
 
 env:
-  GREETING_MESSAGE: "안녕하세요 메시지가 변경되었는지 확인해볼까요?"
+  GREETING_MESSAGE: "새로운 메시지입니다. 변경되었나요?"

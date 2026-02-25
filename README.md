@@ -489,4 +489,94 @@ gitops_test/
   - 완료 후 필요 없어진 `kubectl port-forward`는 종료한다.
   - 새 이미지 배포는 GHCR 푸시 후 `values.yaml`의 `image.tag` 자동 갱신 → ArgoCD 동기화 순으로 반복한다.
 
+## 16. 트러블슈팅
+
+### 16.1 ArgoCD Application 설정 변경 후 리소스가 모두 사라짐
+
+**증상:**
+- `kubectl get pods -n dummy-server` → `No resources found`
+- `kubectl get application dummy-server -n argocd` → `Synced / Healthy` (정상처럼 보임)
+
+**원인:**
+- `argocd/dummy-server-application.yaml`의 `source.path`를 변경(예: `k8s` → `helm/dummy-server`)한 뒤, 파일만 수정하고 **클러스터에 `kubectl apply`를 다시 하지 않은 경우** 발생한다.
+- ArgoCD는 여전히 이전 경로를 바라보고 있고, 해당 경로에 매니페스트가 없으면 `prune: true` 설정으로 기존 리소스를 모두 삭제한다.
+- Git에 파일을 커밋/푸시했더라도 ArgoCD Application **자체의 spec은 클러스터에 직접 반영**해야 한다.
+
+**해결:**
+```bash
+kubectl apply -f argocd/dummy-server-application.yaml
+```
+적용 후 ArgoCD가 새 경로를 인식하고 리소스를 다시 생성한다.
+
+**확인:**
+```bash
+kubectl get application dummy-server -n argocd -o jsonpath='{.spec.source.path}'
+# 출력: helm/dummy-server
+kubectl get pods -n dummy-server
+```
+
+### 16.2 curl 응답이 비어 있거나 exit code 7 발생
+
+**증상:**
+```bash
+curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/sayhello
+# (빈 응답 또는 exit code 7)
+```
+
+**원인:**
+- `kubectl port-forward`가 실행 중이지 않거나, Pod 재생성 등으로 끊어진 경우 발생한다.
+
+**해결:**
+```bash
+# 포트포워드 재실행
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 28080:80 &
+sleep 2
+curl -s -H "Host: dummy.127.0.0.1.nip.io" http://127.0.0.1:28080/sayhello
+```
+
+### 16.3 git push 시 rejected (non-fast-forward)
+
+**증상:**
+```
+ ! [rejected]        main -> main (fetch first)
+error: failed to push some refs to 'github.com:...'
+hint: Updates were rejected because the remote contains work that you do not
+hint: have locally.
+```
+
+**원인:**
+- GitHub Actions 워크플로우의 `Sync Helm values image tag` 단계에서 `values.yaml`의 `image.tag`를 자동으로 커밋/푸시한다.
+- 이 커밋이 리모트에만 존재하므로, 로컬에서 별도로 수정 후 push하면 브랜치가 분기(diverge)되어 거부된다.
+
+**해결:**
+```bash
+git pull --rebase
+git push
+```
+rebase를 사용하면 리모트의 이미지 태그 커밋 위에 로컬 커밋을 올려서 깔끔하게 병합된다.
+
+**예방 (선택):**
+pull 시 항상 rebase를 기본으로 사용하도록 설정한다:
+```bash
+git config pull.rebase true
+```
+
+### 16.4 환경변수 변경 후 ArgoCD가 반영하지 않음
+
+**증상:**
+- `values.yaml`에서 `GREETING_MESSAGE`를 변경하고 push했지만, `/sayhello` 응답이 그대로인 경우
+
+**원인:**
+- ArgoCD의 기본 폴링 주기(약 3분)가 아직 도래하지 않았을 수 있다.
+
+**해결:**
+```bash
+# 즉시 동기화 트리거
+kubectl annotate application dummy-server -n argocd argocd.argoproj.io/refresh=hard --overwrite
+
+# Pod가 재생성될 때까지 대기
+kubectl get pods -n dummy-server -w
+```
+Pod가 새로 뜬 후 다시 curl로 확인한다.
+
 
