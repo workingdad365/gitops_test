@@ -6,7 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/${OWNER}/${REPO}.git
+    # TODO: 본 저장소를 다른 저장소/포크로 바꿀 경우 repoURL만 수정한다.
+    repoURL: https://github.com/workingdad365/gitops_test.git
     targetRevision: main
     path: k8s
   destination:
