@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dummy-server
+  labels:
+    app: dummy-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dummy-server
+  template:
+    metadata:
+      labels:
+        app: dummy-server
+    spec:
+      containers:
+        - name: dummy-server
+          image: ghcr.io/${OWNER}/${REPO}:${IMAGE_TAG}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000

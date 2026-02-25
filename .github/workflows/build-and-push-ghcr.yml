@@ -2,12 +2,6 @@ name: Build and Push dummy_server to GHCR
 
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "이미지 태그"
-        required: false
-        default: "latest"
-        type: string
 
 permissions:
   contents: read
@@ -28,7 +22,9 @@ jobs:
           REPO="${{ github.event.repository.name }}"
           OWNER_LOWER="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
           REPO_LOWER="$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_TAG="$(date +'%Y%m%d-%H%M%S')"
           echo "IMAGE_NAME=ghcr.io/${OWNER_LOWER}/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -47,5 +43,5 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ steps.meta.outputs.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
+            ${{ steps.meta.outputs.IMAGE_NAME }}:${{ steps.meta.outputs.IMAGE_TAG }}
             ${{ steps.meta.outputs.IMAGE_NAME }}:sha-${{ github.sha }}
